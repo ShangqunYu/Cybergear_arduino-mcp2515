@@ -18,7 +18,9 @@ void setup() {
   // gear.setMode(127,2);
 
 //  gear.receiveFrame();
-  gear.setSpeed(127, -15, 0);
+//  gear.setSpeed(127, 10, 0);
+//    delay(100);
+    gear.setAngle(127, 180, 10, 27);    
 //  delay(3000);
   
 //  gear.motorEstop(127);
@@ -38,10 +40,10 @@ void loop() {
 //  if (speed >= 20.0){
 //    speed = -20.0;
 //    }
-  gear.setSpeed(127, -15, 0);
-  gear.receiveFrame();
+//  gear.setSpeed(127, 0, 0);
+//  gear.receiveFrame();
 // gear.getState(127, pos, vel);
-//  Serial.print("Pos: "); Serial.println(pos);
+  gear.getState(127);
 //  Serial.print("Vel: "); Serial.println(vel);
   delay(200);
   

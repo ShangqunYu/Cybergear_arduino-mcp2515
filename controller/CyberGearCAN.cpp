@@ -11,28 +11,23 @@ void CyberGearCAN::begin(CAN_SPEED canSpeed, CAN_CLOCK mcpClock) {
   _mcp.setNormalMode();
 }
 
+// ——— Initalize all the Motors() ————————————————————————————————————————
 void CyberGearCAN::initMotors(uint8_t mode){
   for (int i; i < _num_motor; i++){
-//    motorEstop(_motorIDs[i]);
     motorEnable(_motorIDs[i]);
-    delay(100);
     setMode(_motorIDs[i], mode);
-    delay(100);
-//    setZeroPosition(_motorIDs[i]);
-//    delay(100);
-
-
-
+    setZeroPosition(_motorIDs[i]);
   }
 }
 
+// ——— Store every motors id and state() —————————————————————————————————
 bool CyberGearCAN::setMotorIDs(const uint8_t* ids, uint8_t count){
   if (count > MAX_MOTORS) return false;
   _num_motor = count;
   Serial.print("_num_motor: ");  Serial.println(_num_motor);
   for (uint8_t i = 0; i < _num_motor; ++i) {
     _motorIDs[i]    = ids[i];
-    _motorStates[i] = MotorState();  // reset to defaults
+    _motorStates[i] = MotorState();  
   }
   return true;  
 }
@@ -42,11 +37,9 @@ int8_t CyberGearCAN::findMotorIndex(uint8_t id) {
   for (uint8_t i = 0; i < _num_motor; ++i){
     if (_motorIDs[i] == id) return i;
   }
-    
   Serial.println("can't find the motor index, will just use the 0 index to prevent seg fault!!!");
   return 0;
 }
-
 
 // ——— sendCommand ——————————————————————————————————————————————————————
 void CyberGearCAN::sendCommand(uint8_t id,
@@ -65,7 +58,8 @@ void CyberGearCAN::sendCommand(uint8_t id,
   }
   _mcp.sendMessage(MCP2515::TXB0, &frame);
 }
-// ——— receiveCommand Simon fixing
+
+// ——— receiveCommand  ————————————————————————————————————————
 bool CyberGearCAN::receiveFrame() {
   struct can_frame frame;
   if (_mcp.readMessage(MCP2515::RXB0, &frame) == MCP2515::ERROR_OK) {
@@ -123,37 +117,39 @@ float CyberGearCAN::uintToFloat(uint32_t x, float xMin, float xMax, uint8_t bits
   return xMin + ( (float)x / (float)span ) * fspan;
 }
 
-// ——— high-level API ——————————————————————————————————————————————————
+// ——— Enable the motor ——————————————————————————————————————————————————
 void CyberGearCAN::motorEnable(uint8_t id) {
   uint8_t conData[2] = { 0, 0 };
   uint8_t data8[8] = {0};
   sendCommand(id, 3, conData, data8);
+  // everytime calling motor enable, the motor will need some time to enable, so need to delay. 
+  delay(50);
 }
 
+// ——— 0: Operation control  1: Position  2: Speed  3: Current  ——————————————————————————————————————————————————
 void CyberGearCAN::setMode(uint8_t id, uint8_t mode) {
-  // mode: 0=torque,1=pos,2=vel,3=current
-
   writeProperty(id, 0x7005, "u", uint32_t(mode));
 }
 
 void CyberGearCAN::setAngle(uint8_t id, float angleDeg, float speedRpm, float limCur) {
-  motorEnable(id);
+  // motorEnable(id);
   setMode(id, 1);
-  // writeProperty(id, 0x7018, "f", limCur);
-  // writeProperty(id, 0x7017, "f", speedRpm * RMIN_RAD_S);
-  // writeProperty(id, 0x7016, "f", angleDeg * DEG_RAD);
+  uint32_t cdata;
+  memcpy(&cdata, &limCur, sizeof(limCur));
+  writeProperty(id, 0x7018, "f", cdata);
+  uint32_t sdata;
+  float radPerS =  speedRpm * RMIN_RAD_S;
+  memcpy(&sdata, &radPerS, sizeof(radPerS));
+  writeProperty(id, 0x7017, "f", sdata);
+  uint32_t data;
+  float rad = angleDeg * DEG_RAD;
+  memcpy(&data, &rad, sizeof(rad));
+  writeProperty(id, 0x7016, "f", data);
 }
 
 void CyberGearCAN::setSpeed(uint8_t id, float speedRpm, float limCur) {
   // motorEnable(id);
-  // setMode(id, 2);
-  // writeProperty(id, 0x7018, "f", limCur);
-  // writeProperty(id, 0x700A, "f", speedRpm * RMIN_RAD_S);
-  // uint8_t cmd[2] = { 0, 0 }; // host can ID
-  // uint8_t data8[8] = {0};
-  // uint16_t indexValue = 0x700A;
-  // data8[0] = (uint8_t)(indexValue & 0xFF);
-  // data8[1] = (uint8_t)(indexValue >> 8);
+  setMode(id, 2);
 
   uint32_t data; // = floatToUint(speedRpm * RMIN_RAD_S, V_MIN, V_MAX, 32);
   float radPerS = speedRpm * RMIN_RAD_S;
@@ -316,15 +312,12 @@ void CyberGearCAN::writeProperty(uint8_t id, uint16_t index,
 //   _masterId = 0; // restore
 // }
 
-void CyberGearCAN::getState(uint8_t id, float& outPosDeg, float& outVelRpm) {
-  writeProperty(id, 0x7018, "f", uint32_t(23));
-  // data arrives in motor_state; here we re‐read
-  // you’d mirror the Python reply_state logic to fill a temp buffer
-  // For brevity assume next frame contains mode==2
-  uint8_t motorIndex = findMotorIndex(id);
-  outPosDeg = _motorStates[motorIndex].angle;
-  outVelRpm = _motorStates[motorIndex].speed;
-
+void CyberGearCAN::getState(uint8_t id) {
+  // writeProperty(id, 0x7018, "f", uint32_t(27));
+  uint8_t cmd[2] = { 0, 0 };
+  uint8_t d[8]={0};
+  sendCommand(id, 0x15, cmd, d);
+  receiveFrame();
 }
 
 // bool CyberGearCAN::getVolCur(uint8_t id, float& volts, float& amps) {

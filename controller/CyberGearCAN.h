@@ -52,7 +52,7 @@ public:
 
   // status queries
   // void  getId(uint8_t id = 127);
-  void  getState(uint8_t id, float& outPosDeg, float& outVelRpm);
+  void  getState(uint8_t id);
   // bool  getVolCur(uint8_t id, float& outVolts, float& outAmps);
   bool receiveFrame();
 private:
