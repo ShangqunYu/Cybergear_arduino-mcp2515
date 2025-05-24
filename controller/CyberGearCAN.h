@@ -28,7 +28,7 @@ public:
   void begin(CAN_SPEED canSpeed = CAN_1000KBPS,
             CAN_CLOCK mcpClock = MCP_8MHZ);
   bool setMotorIDs(const uint8_t* ids, uint8_t count);
-
+  void initMotors(uint8_t mode);
   // high-level API
   void motorEnable(uint8_t id = 127);
   void setMode(uint8_t id, uint8_t mode);
@@ -41,20 +41,20 @@ public:
   void motorEstop(uint8_t id = 127);
   void setZeroPosition(uint8_t id = 127);
   void clearError(uint8_t id = 127);
-  bool    setId(uint8_t oldId, uint8_t newId);
-  void    initConfig(uint8_t id = 127);
+  // bool    setId(uint8_t oldId, uint8_t newId);
+  // void    initConfig(uint8_t id = 127);
 
   // lower-level property read/write
   void writeProperty(uint8_t id, uint16_t index,
-                     const char* type, float value);
-  float readProperty(uint8_t id, uint16_t index,
-                     const char* type);
+                     const char* type, uint32_t data);
+  // float readProperty(uint8_t id, uint16_t index,
+  //                    const char* type);
 
   // status queries
-  void  getId(uint8_t id = 127);
-  bool  getState(uint8_t id, float& outPosDeg, float& outVelRpm);
-  bool  getVolCur(uint8_t id, float& outVolts, float& outAmps);
-  bool receiveFrame(uint8_t buf[8], uint8_t& len, uint32_t& canId);
+  // void  getId(uint8_t id = 127);
+  void  getState(uint8_t id, float& outPosDeg, float& outVelRpm);
+  // bool  getVolCur(uint8_t id, float& outVolts, float& outAmps);
+  bool receiveFrame();
 private:
   MCP2515   _mcp;
   uint8_t   _masterId;

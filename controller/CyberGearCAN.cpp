@@ -11,9 +11,25 @@ void CyberGearCAN::begin(CAN_SPEED canSpeed, CAN_CLOCK mcpClock) {
   _mcp.setNormalMode();
 }
 
+void CyberGearCAN::initMotors(uint8_t mode){
+  for (int i; i < _num_motor; i++){
+//    motorEstop(_motorIDs[i]);
+    motorEnable(_motorIDs[i]);
+    delay(100);
+    setMode(_motorIDs[i], mode);
+    delay(100);
+//    setZeroPosition(_motorIDs[i]);
+//    delay(100);
+
+
+
+  }
+}
+
 bool CyberGearCAN::setMotorIDs(const uint8_t* ids, uint8_t count){
   if (count > MAX_MOTORS) return false;
   _num_motor = count;
+  Serial.print("_num_motor: ");  Serial.println(_num_motor);
   for (uint8_t i = 0; i < _num_motor; ++i) {
     _motorIDs[i]    = ids[i];
     _motorStates[i] = MotorState();  // reset to defaults
@@ -50,20 +66,23 @@ void CyberGearCAN::sendCommand(uint8_t id,
   _mcp.sendMessage(MCP2515::TXB0, &frame);
 }
 // ——— receiveCommand Simon fixing
-bool CyberGearCAN::receiveFrame(uint8_t buf[8], uint8_t& len, uint32_t& canId) {
+bool CyberGearCAN::receiveFrame() {
   struct can_frame frame;
   if (_mcp.readMessage(MCP2515::RXB0, &frame) == MCP2515::ERROR_OK) {
     // get the 29 bit ID
-    canId = frame.can_id & CAN_EFF_MASK;
+    uint32_t canId = frame.can_id & CAN_EFF_MASK;
     uint32_t conMode = (canId >> 24) & 0x1F;
     uint32_t motorId = (canId >> 8) & 0xff;
     uint8_t motorIndex = findMotorIndex(motorId);
     //Byte 0 ~ 1: Current angle [0 ~ 65535] corresponds to (-4π ~ 4π)
-    _motorStates[motorIndex].angle  =  uintToFloat((frame.data[0] << 8) | frame.data[1], P_MIN, P_MAX, 16) * RAD_DEG;
+    uint16_t angle = (frame.data[0] << 8) | frame.data[1];
+    _motorStates[motorIndex].angle  =  uintToFloat(angle, P_MIN, P_MAX, 16) * RAD_DEG;
     //Byte 2 ~ 3: Current angular velocity [0 ~ 65535] corresponds to (-30rad/s ~ 30rad/s)
-    _motorStates[motorIndex].speed  =  uintToFloat((frame.data[2] << 8) | frame.data[3], V_MIN, V_MAX, 16) * RAD_S_RMIN;
+    uint16_t speed = (frame.data[2] << 8) | frame.data[3];
+    _motorStates[motorIndex].speed  =  uintToFloat(speed, V_MIN, V_MAX, 16) * RAD_S_RMIN;
     //Byte 4 ~ 5: Current torque [0 ~ 65535] corresponds to (-12Nm ~ 12Nm)
-    _motorStates[motorIndex].torque = uintToFloat((frame.data[4] << 8) | frame.data[5], T_MIN, T_MAX, 16);
+    uint16_t torque = (frame.data[4] << 8) | frame.data[5];
+    _motorStates[motorIndex].torque = uintToFloat(torque, T_MIN, T_MAX, 16);
     //Byte 6 ~ 7: Current temperature: Temp (degrees Celsius) )*10
     _motorStates[motorIndex].temp   = ((frame.data[6] << 8) | frame.data[7]) * 0.1;
     //Bit 22 ~ 23 of 29 bit ID: mode status: 0: Reset mode [reset] 1: Cali mode [Calibration] 2: Motor mode [Run]
@@ -76,9 +95,14 @@ bool CyberGearCAN::receiveFrame(uint8_t buf[8], uint8_t& len, uint32_t& canId) {
     Serial.print("temp: ");   Serial.println(_motorStates[motorIndex].temp);
     Serial.print("modeStatus: ");   Serial.println(_motorStates[motorIndex].modeStatus);
     Serial.print("axisError: ");   Serial.println(_motorStates[motorIndex].axisError);
-
-    len   = frame.can_dlc;
-    memcpy(buf, frame.data, len);
+    Serial.print("overcurrent: ");  Serial.println(canId >> 17 & 0x1);
+    Serial.print("over temperature: ");  Serial.println(canId >> 18 & 0x1);
+    Serial.print("Magnetic encoding failure: ");  Serial.println(canId >> 19 & 0x1);
+    Serial.print("HALL encoding failure: ");  Serial.println(canId >> 20 & 0x1);
+    Serial.print("not calibrated: ");  Serial.println(canId >> 21 & 0x1);
+    Serial.print("overcurrent: ");  Serial.println(canId >> 17 & 0x1);
+    // uint8_t len   = frame.can_dlc;
+    // memcpy(buf, frame.data, len);
     return true;
   }
   return false;
@@ -109,21 +133,15 @@ void CyberGearCAN::motorEnable(uint8_t id) {
 void CyberGearCAN::setMode(uint8_t id, uint8_t mode) {
   // mode: 0=torque,1=pos,2=vel,3=current
 
-  uint8_t conData[2] = { 0, 0 };
-  uint8_t data8[8] = {0};
-  uint16_t indexValue = 0x7005;
-  data8[0] = (uint8_t)(indexValue & 0xFF);
-  data8[1] = (uint8_t)(indexValue >> 8);
-  data8[4] = mode;
-  sendCommand(127, 18, conData, data8);
+  writeProperty(id, 0x7005, "u", uint32_t(mode));
 }
 
 void CyberGearCAN::setAngle(uint8_t id, float angleDeg, float speedRpm, float limCur) {
   motorEnable(id);
   setMode(id, 1);
-  writeProperty(id, 0x7018, "f", limCur);
-  writeProperty(id, 0x7017, "f", speedRpm * RMIN_RAD_S);
-  writeProperty(id, 0x7016, "f", angleDeg * DEG_RAD);
+  // writeProperty(id, 0x7018, "f", limCur);
+  // writeProperty(id, 0x7017, "f", speedRpm * RMIN_RAD_S);
+  // writeProperty(id, 0x7016, "f", angleDeg * DEG_RAD);
 }
 
 void CyberGearCAN::setSpeed(uint8_t id, float speedRpm, float limCur) {
@@ -131,32 +149,23 @@ void CyberGearCAN::setSpeed(uint8_t id, float speedRpm, float limCur) {
   // setMode(id, 2);
   // writeProperty(id, 0x7018, "f", limCur);
   // writeProperty(id, 0x700A, "f", speedRpm * RMIN_RAD_S);
-  uint8_t cmd[2] = { 0, 0 }; // host can ID
-  uint8_t data8[8] = {0};
-  uint16_t indexValue = 0x700A;
-  data8[0] = (uint8_t)(indexValue & 0xFF);
-  data8[1] = (uint8_t)(indexValue >> 8);
+  // uint8_t cmd[2] = { 0, 0 }; // host can ID
+  // uint8_t data8[8] = {0};
+  // uint16_t indexValue = 0x700A;
+  // data8[0] = (uint8_t)(indexValue & 0xFF);
+  // data8[1] = (uint8_t)(indexValue >> 8);
 
-  uint32_t u; // = floatToUint(speedRpm * RMIN_RAD_S, V_MIN, V_MAX, 32);
+  uint32_t data; // = floatToUint(speedRpm * RMIN_RAD_S, V_MIN, V_MAX, 32);
   float radPerS = speedRpm * RMIN_RAD_S;
-  memcpy(&u, &radPerS, sizeof(radPerS));
-  Serial.print("u: "); Serial.println(u); 
-  data8[4] =  u        & 0xFF;  
-  data8[5] = (u >>  8) & 0xFF;  
-  data8[6] = (u >> 16) & 0xFF;  
-  data8[7] = (u >> 24) & 0xFF;  
-  // Serial.print("data8: ");
-  // for (int i = 0; i < 8; i++){
-  //   Serial.print(data8[i]);  Serial.print(" ");
-  // }
-  //  Serial.println();
-  sendCommand(127, 18, cmd, data8);
+  memcpy(&data, &radPerS, sizeof(radPerS));
+
+  writeProperty(id, 0x700A, "f", data);
 }
 
 void CyberGearCAN::setTorque(uint8_t id, float torqueNm) {
   motorEnable(id);
   setMode(id, 3);
-  writeProperty(id, 0x7006, "f", torqueNm / TORQUE_CONST);
+  // writeProperty(id, 0x7006, "f", torqueNm / TORQUE_CONST);
 }
 
 void CyberGearCAN::impedanceControl(uint8_t id,
@@ -193,10 +202,10 @@ void CyberGearCAN::motorEstop(uint8_t id) {
 
 void CyberGearCAN::setZeroPosition(uint8_t id) {
   // do an estop, then send zero idx
-  motorEstop(id);
-  uint8_t cmd[2]={0,0}, d[8]={0};
+  // motorEstop(id);
+  uint8_t conData[2]={0,0}, d[8]={0};
   d[0]=0x01;
-  sendCommand(id, 6, cmd, d);
+  sendCommand(id, 6, conData, d);
   // re-enable if was vel mode etc can be added
 }
 
@@ -206,142 +215,125 @@ void CyberGearCAN::clearError(uint8_t id) {
   sendCommand(id, 4, cmd, d);
 }
 
-bool CyberGearCAN::setId(uint8_t oldId, uint8_t newId) {
-  // fetch MCU ID first
-  getId(oldId);
-  // implement getId→_mcuIdBytes[8] storage in class if needed...
-  // then:
-  motorEstop(oldId);
-  delay(100);
-  // assume you stored 8-byte MCU_ID in a member uint8_t _mcuId[8]
-  uint8_t cmd[2]={0, newId};
-  uint8_t d[8];
-  memcpy(d, _mcuId, 8);
-  sendCommand(oldId, 7, cmd, d);
-  delay(100);
-  return true; // no error checking here
-}
+// bool CyberGearCAN::setId(uint8_t oldId, uint8_t newId) {
+//   // fetch MCU ID first
+//   getId(oldId);
+//   // implement getId→_mcuIdBytes[8] storage in class if needed...
+//   // then:
+//   motorEstop(oldId);
+//   delay(100);
+//   // assume you stored 8-byte MCU_ID in a member uint8_t _mcuId[8]
+//   uint8_t cmd[2]={0, newId};
+//   uint8_t d[8];
+//   memcpy(d, _mcuId, 8);
+//   sendCommand(oldId, 7, cmd, d);
+//   delay(100);
+//   return true; // no error checking here
+// }
 
-void CyberGearCAN::initConfig(uint8_t id) {
-  uint8_t cmd[2]={0,3}, d[8]={0};
-  sendCommand(id, 8, cmd, d);
-  delay(3000);
-  setId(127, id);
-}
+// void CyberGearCAN::initConfig(uint8_t id) {
+//   uint8_t cmd[2]={0,3}, d[8]={0};
+//   sendCommand(id, 8, cmd, d);
+//   delay(3000);
+//   setId(127, id);
+// }
 
 // ——— writeProperty / readProperty —————————————————————————————————————
 void CyberGearCAN::writeProperty(uint8_t id, uint16_t index,
-                                 const char* type, float value) {
-  uint8_t cmd[2]={0,0};
-  uint8_t d[8]={0};
+                                 const char* type, uint32_t data ) {
+  uint8_t conType[2] = { 0, 0 }; // host can ID
+  uint8_t d[8] = {0};
+  d[0] = (uint8_t)(index & 0xFF);
+  d[1] = (uint8_t)(index >> 8);
   // index low / high
-  d[0] = index & 0xFF;
-  d[1] = (index>>8)&0xFF;
 
-  uint8_t mode = 18;
-  if (index < 0x7000) {
-    mode = 8;
-    // type→index: [u8,s8,u16,s16,u32,s32,f]
-    const char* types[] = {"u8","s8","u16","s16","u32","s32","f"};
-    for(uint8_t i=0;i<7;i++)
-      if (strcmp(type,types[i])==0) d[2]=i;
-  }
+
   // pack the payload
   if (strcmp(type,"f")==0) {
-    union { float f; uint8_t b[4]; } fu;
-    fu.f = value;
-    for(uint8_t i=0;i<4;i++) d[4+i] = fu.b[i];
+    d[4] =  data        & 0xFF;  
+    d[5] = (data >>  8) & 0xFF;  
+    d[6] = (data >> 16) & 0xFF;  
+    d[7] = (data >> 24) & 0xFF;  
   } else {
-    // integer types
-    uint32_t u = floatToUint(value, 0, 0, 8*atoi(&type[1]) );
-    for(uint8_t i=0;i<4;i++){
-      d[4+i] = (u>>(8*i)) & 0xFF;
-    }
+    d[4] = data & 0xFF; 
   }
-  sendCommand(id, mode, cmd, d);
+  sendCommand(id, 18, conType, d);
+  receiveFrame();
 }
 
-float CyberGearCAN::readProperty(uint8_t id, uint16_t index,
-                                 const char* type) {
-  uint8_t cmd[2]={0,0}, d[8]={0};
-  d[0] = index & 0xFF;
-  d[1] = (index>>8)&0xFF;
-  uint8_t mode = (index<0x7000) ? 9 : 17;
-  if (index<0x7000) {
-    const char* types[] = {"u8","s8","u16","s16","u32","s32","f"};
-    for(uint8_t i=0;i<7;i++)
-      if (strcmp(type,types[i])==0) d[2]=i;
-  }
-  sendCommand(id, mode, cmd, d);
-  // now wait for reply
-  uint8_t buf[8], dlc;
-  uint32_t fid;
-  unsigned long t0 = millis();
-  while(millis()-t0 < 500) {
-    if (receiveFrame(buf, dlc, fid) && (buf[0]==mode)) {
-      // payload starts at buf[1]
-      if (strcmp(type,"f")==0) {
-        union { float f; uint8_t b[4]; } ru;
-        for(int i=0;i<4;i++) ru.b[i]=buf[4+i];
-        return ru.f;
-      } else {
-        // integer type
-        uint32_t u=0, bits = 8*atoi(&type[1]);
-        for(int i=0;i<((bits+7)/8);i++){
-          u |= ((uint32_t)buf[4+i]) << (8*i);
-        }
-        return (float)u;
-      }
-    }
-  }
-  return 0.0; // timeout
-}
+// float CyberGearCAN::readProperty(uint8_t id, uint16_t index,
+//                                  const char* type) {
+//   uint8_t cmd[2]={0,0}, d[8]={0};
+//   d[0] = index & 0xFF;
+//   d[1] = (index>>8)&0xFF;
+//   uint8_t mode = (index<0x7000) ? 9 : 17;
+//   if (index<0x7000) {
+//     const char* types[] = {"u8","s8","u16","s16","u32","s32","f"};
+//     for(uint8_t i=0;i<7;i++)
+//       if (strcmp(type,types[i])==0) d[2]=i;
+//   }
+//   sendCommand(id, mode, cmd, d);
+//   // now wait for reply
+//   uint8_t buf[8], dlc;
+//   uint32_t fid;
+//   unsigned long t0 = millis();
+//   while(millis()-t0 < 500) {
+//     if (receiveFrame(buf, dlc, fid) && (buf[0]==mode)) {
+//       // payload starts at buf[1]
+//       if (strcmp(type,"f")==0) {
+//         union { float f; uint8_t b[4]; } ru;
+//         for(int i=0;i<4;i++) ru.b[i]=buf[4+i];
+//         return ru.f;
+//       } else {
+//         // integer type
+//         uint32_t u=0, bits = 8*atoi(&type[1]);
+//         for(int i=0;i<((bits+7)/8);i++){
+//           u |= ((uint32_t)buf[4+i]) << (8*i);
+//         }
+//         return (float)u;
+//       }
+//     }
+//   }
+//   return 0.0; // timeout
+// }
 
 // ——— getId / getState / getVolCur —————————————————————————————————————
-void CyberGearCAN::getId(uint8_t id) {
-  // send same as set mode 0 but masterId=0xFD
-  _masterId = 0xFD;
-  uint8_t cmd[2]={0,0}, d[8]={0};
-  sendCommand(id, 0, cmd, d);
-  // then read back into _mcuId[8]
-  uint8_t buf[8], dlc; uint32_t fid;
-  unsigned long t0=millis();
-  while (millis()-t0<500) {
-    if (receiveFrame(buf, dlc, fid) && buf[0]==0) {
-      // buf[4..11] is MCU ID
-      for(int i=0;i<8;i++) _mcuId[i]=buf[4+i];
-      break;
-    }
-  }
-  _masterId = 0; // restore
-}
+// void CyberGearCAN::getId(uint8_t id) {
+//   // send same as set mode 0 but masterId=0xFD
+//   _masterId = 0xFD;
+//   uint8_t cmd[2]={0,0}, d[8]={0};
+//   sendCommand(id, 0, cmd, d);
+//   // then read back into _mcuId[8]
+//   uint8_t buf[8], dlc; uint32_t fid;
+//   unsigned long t0=millis();
+//   while (millis()-t0<500) {
+//     if (receiveFrame(buf, dlc, fid) && buf[0]==0) {
+//       // buf[4..11] is MCU ID
+//       for(int i=0;i<8;i++) _mcuId[i]=buf[4+i];
+//       break;
+//     }
+//   }
+//   _masterId = 0; // restore
+// }
 
-bool CyberGearCAN::getState(uint8_t id, float& outPosDeg, float& outVelRpm) {
-  writeProperty(id, 0x7018, "f", 27.0f);
+void CyberGearCAN::getState(uint8_t id, float& outPosDeg, float& outVelRpm) {
+  writeProperty(id, 0x7018, "f", uint32_t(23));
   // data arrives in motor_state; here we re‐read
   // you’d mirror the Python reply_state logic to fill a temp buffer
   // For brevity assume next frame contains mode==2
-  uint8_t buf[8], dlc; uint32_t fid;
-  unsigned long t0=millis();
-  while (millis()-t0<200) {
-    if (receiveFrame(buf, dlc, fid) && buf[0]==2) {
-      uint16_t p = (buf[4]<<8)|buf[5];
-      uint16_t v = (buf[6]<<8)|buf[7];
-      outPosDeg = uintToFloat(p, P_MIN, P_MAX, 16) * RAD_DEG;
-      outVelRpm = uintToFloat(v, V_MIN, V_MAX, 16) * RAD_S_RMIN;
-      return true;
-    }
-  }
-  return false;
+  uint8_t motorIndex = findMotorIndex(id);
+  outPosDeg = _motorStates[motorIndex].angle;
+  outVelRpm = _motorStates[motorIndex].speed;
+
 }
 
-bool CyberGearCAN::getVolCur(uint8_t id, float& volts, float& amps) {
-  float v = readProperty(id, 0x302B, "f");
-  float a = readProperty(id, 0x301E, "f");
-  if (v!=0 || a!=0) {
-    volts = v * 0.001f;
-    amps  = a;
-    return true;
-  }
-  return false;
-}
+// bool CyberGearCAN::getVolCur(uint8_t id, float& volts, float& amps) {
+//   float v = readProperty(id, 0x302B, "f");
+//   float a = readProperty(id, 0x301E, "f");
+//   if (v!=0 || a!=0) {
+//     volts = v * 0.001f;
+//     amps  = a;
+//     return true;
+//   }
+//   return false;
+// }
